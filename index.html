@@ -166,7 +166,7 @@ h2.sec{font:600 13px var(--f-display);text-transform:uppercase;letter-spacing:.0
 .me{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
 .me select{padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);max-width:160px}
 .share{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.cfgwarn{background:var(--accent-soft);border-radius:10px;padding:10px 14px;font-size:13.5px;margin-bottom:16px}
+.cfgwarn{border:1px solid var(--owe);color:var(--ink);overflow-wrap:anywhere;background:var(--accent-soft);border-radius:10px;padding:10px 14px;font-size:13.5px;margin-bottom:16px}
 </style>
 </head>
 <body>
@@ -176,6 +176,7 @@ h2.sec{font:600 13px var(--f-display);text-transform:uppercase;letter-spacing:.0
     <select class="trip" id="trip-select" aria-label="เลือกทริป"></select>
     <button class="btn" id="newtrip-btn" data-act="new-trip">+ ทริปใหม่</button>
   </header>
+  <div class="cfgwarn" id="diag" hidden></div>
   <div id="app"><div class="loading">กำลังโหลดข้อมูล…</div></div>
   <div class="modenote" id="modenote"></div>
 </div>
@@ -221,6 +222,25 @@ const Me = {
   set(tid,mid){ const m=lsGet("tripsplit.me",{}); if(mid) m[tid]=mid; else delete m[tid]; lsSet("tripsplit.me",m); }
 };
 
+/* ---------- Setup problems, explained ---------- */
+function explainErr(e){
+  const c = String((e && (e.code||e.message)) || e || "");
+  if(/operation-not-allowed|admin-restricted/.test(c)) return "ยังไม่ได้เปิด Anonymous ใน Firebase → Authentication → Sign-in method";
+  if(/unauthorized-domain|requests-from-referer|referer/.test(c)) return "โดเมนนี้ยังไม่ได้อยู่ใน Firebase → Authentication → Settings → Authorized domains";
+  if(/api-key-not-valid|invalid-api-key/.test(c)) return "apiKey ใน config.js ไม่ถูกต้อง";
+  if(/permission-denied|insufficient permissions/i.test(c)) return "Firestore ไม่อนุญาต: ยังไม่ได้วาง Rules จากไฟล์ firestore.rules แล้วกด Publish";
+  if(/does not exist|not-found|failed-precondition|NOT_FOUND/i.test(c)) return "ยังไม่ได้สร้าง Firestore Database ในโปรเจกต์นี้";
+  if(/network|unavailable|Failed to fetch|import/i.test(c)) return "ต่ออินเทอร์เน็ตหรือโหลด Firebase ไม่ได้ ลองรีเฟรช";
+  return "เกิดข้อผิดพลาด";
+}
+function showDiag(msg, e){
+  const el=document.getElementById("diag"); if(!el) return;
+  if(!msg){ el.hidden=true; return; }
+  const code = e ? String(e.code||e.message||e).slice(0,160) : "";
+  el.innerHTML = `<b>${esc(msg)}</b>${code?`<br><span class="hint">รหัส: ${esc(code)}</span>`:""}`;
+  el.hidden=false;
+}
+
 /* ---------- Storage: Firestore when configured, this browser otherwise ---------- */
 const FB_VER = "10.12.2";
 const Store = {
@@ -240,7 +260,8 @@ const Store = {
         authMod.signInAnonymously(auth).catch(rej);
       });
       this.fs=fs; this.db=db; this.mode="cloud";
-    }catch(e){ console.error("Firebase init failed", e); this.mode="error"; }
+    }catch(e){ console.error("Firebase init failed", e); this.mode="error"; this.err=e;
+      showDiag("เชื่อมต่อฐานข้อมูลไม่สำเร็จ: "+explainErr(e), e); }
   },
   // Writes resolve quickly so the UI never hangs offline; Firestore syncs when back online.
   _w(p){ p.catch(e=>dbErr(e)); return Promise.race([p, new Promise(r=>setTimeout(r,700))]); },
@@ -267,7 +288,7 @@ const Store = {
     for(const id of ids) if(!this._tUnsub.has(id)){
       this._tUnsub.set(id, onSnapshot(doc(this.db,"trips",id),
         snap=>{ if(!snap.exists() && snap.metadata.fromCache) return; this._tData.set(id, snap.exists()?{id,...snap.data()}:{id,missing:true}); this._emitTrips(); },
-        ()=>{ this._tData.set(id,{id,missing:true}); this._emitTrips(); }));
+        err=>{ console.error("trip load", err); showDiag("เปิดทริปไม่ได้: "+explainErr(err), err); this._tData.set(id,{id,failed:true}); this._emitTrips(); }));
     }
     this._emitTrips();
     clearTimeout(this._tTimer); this._tTimer=setTimeout(()=>this._emitTrips(true),6000);
@@ -325,7 +346,7 @@ function toast(msg){ const el=$("#toast"); el.textContent=msg; el.hidden=false; 
 function dbErr(e){
   console.error(e);
   const c=e&&e.code;
-  if(c==="permission-denied") toast("ไม่มีสิทธิ์ทำรายการนี้");
+  if(c==="permission-denied"){ toast("บันทึกไม่ได้: ไม่มีสิทธิ์"); showDiag("บันทึกไม่ได้: "+explainErr(e), e); }
   else if(c==="resource-exhausted") toast("ใช้งานเกินโควตาฐานข้อมูลวันนี้ ลองใหม่พรุ่งนี้");
   else toast("บันทึกไม่สำเร็จ ลองอีกครั้ง");
 }
@@ -849,11 +870,12 @@ window.addEventListener("hashchange", ()=>{ const id=linkTripId(); if(id && Stor
   await Store.init();
   const linked = linkTripId();
   if(linked && Store.db){ Joined.add(linked); st.cur = linked; }
+  if(linked && !Store.db && Store.mode!=="error") showDiag("ลิงก์นี้เป็นทริปออนไลน์ แต่เว็บนี้ยังไม่ได้ตั้งค่า Firebase ใน config.js");
   let first=true;
   Store.subTrips(list => {
     st.trips=list; st.loaded=true;
     if(!list.find(t=>t.id===st.cur)){
-      if(first && linked && Store.db) toast("ไม่พบทริปจากลิงก์นี้ ลิงก์อาจผิด หรือทริปถูกลบไปแล้ว");
+      if(first && linked && Store.db && document.getElementById("diag").hidden) showDiag("ไม่พบทริปจากลิงก์นี้ ลิงก์อาจไม่ครบ (ต้องมี #/t/ ต่อท้าย) หรือทริปถูกลบไปแล้ว");
       const nx=[...list].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0];
       selectTrip(nx?nx.id:null);
     } else if(!unsubExp) { selectTrip(st.cur); if(linked && !Me.get(st.cur)) toast("เลือกว่าคุณคือใคร ที่ช่อง “ฉันคือ”"); }
