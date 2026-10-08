@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>หารค่าทริป</title>
+<meta name="description" content="จดค่าใช้จ่ายทริปกับเพื่อน ใครออกก่อนจดไว้ แล้วคำนวณว่าใครต้องโอนให้ใคร">
+<meta name="theme-color" content="#0E6B57">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+/* Layout: one column on phones (receipt summary on top), two columns on desktop with the receipt pinned on the right */
+:root{
+  --paper:#EEF2EF; --card:#FFFFFF; --ink:#16222A; --muted:#5B696E; --line:#D5DDD8;
+  --accent:#0E6B57; --accent-ink:#FFFFFF; --accent-soft:#DCEDE6;
+  --owe:#B03F2C; --get:#1C7548; --scrim:rgba(14,22,26,.45);
+  --f-display:"Bai Jamjuree","IBM Plex Sans Thai",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans Thai",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --r:12px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#0F1619; --card:#162024; --ink:#E4EBE8; --muted:#90A09C; --line:#27363B;
+  --accent:#3DB892; --accent-ink:#04201A; --accent-soft:#183A31;
+  --owe:#F0907A; --get:#6FD3A0; --scrim:rgba(0,0,0,.6); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0F1619; --card:#162024; --ink:#E4EBE8; --muted:#90A09C; --line:#27363B;
+  --accent:#3DB892; --accent-ink:#04201A; --accent-soft:#183A31;
+  --owe:#F0907A; --get:#6FD3A0; --scrim:rgba(0,0,0,.6); color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+img{max-width:100%}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--paper);color:var(--ink);font:15px/1.55 var(--f-body);margin:0}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-weight:500}
+
+.wrap{max-width:1080px;margin:0 auto;padding-inline:16px;padding-block:16px 120px}
+header.top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.brand{font:700 22px/1.1 var(--f-display);letter-spacing:.01em;margin-right:auto}
+.brand small{display:block;font:500 12px var(--f-body);color:var(--muted);letter-spacing:0}
+select.trip{min-width:0;max-width:100%;flex:1 1 180px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:9px 14px;font-weight:500}
+.btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--owe);border-color:var(--owe);background:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+.grid{display:grid;gap:20px;grid-template-areas:"receipt" "main"}
+@media (min-width:900px){.grid{grid-template-columns:minmax(0,1fr) 380px;grid-template-areas:"main receipt";align-items:start}
+  .receipt{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px)}}
+.main{grid-area:main;display:flex;flex-direction:column;gap:20px;min-width:0}
+
+.triphead{display:flex;flex-direction:column;gap:10px}
+.triphead h1{font:700 26px/1.2 var(--f-display);margin:0;text-wrap:balance}
+.meta{color:var(--muted);font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--accent-soft);color:var(--ink);font-size:13px;font-weight:500;border:0}
+.chip.add{background:transparent;border:1px dashed var(--line);color:var(--muted)}
+
+h2.sec{font:600 13px var(--f-display);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 8px}
+
+/* Receipt */
+.receipt{grid-area:receipt;background:var(--card);border-radius:var(--r) var(--r) 0 0;padding:20px 20px 26px;position:relative;
+  --tooth:10px;
+  -webkit-mask:radial-gradient(circle at 50% 100%,transparent 6px,#000 6.5px) bottom/var(--tooth) 12px repeat-x,linear-gradient(#000,#000) top/100% calc(100% - 11px) no-repeat;
+  mask:radial-gradient(circle at 50% 100%,transparent 6px,#000 6.5px) bottom/var(--tooth) 12px repeat-x,linear-gradient(#000,#000) top/100% calc(100% - 11px) no-repeat}
+.rc-title{font:700 13px var(--f-display);letter-spacing:.14em;text-transform:uppercase;text-align:center;color:var(--muted)}
+.rc-total{text-align:center;margin:6px 0 2px}
+.rc-total .num{font-size:30px;font-weight:600;letter-spacing:-.01em}
+.rc-sub{text-align:center;color:var(--muted);font-size:13px}
+.perf{border:0;border-top:1.5px dashed var(--line);margin:16px 0}
+.rc-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:3px 0;font-size:14px}
+.rc-row .who{min-width:0;overflow-wrap:anywhere}
+.pos{color:var(--get)} .neg{color:var(--owe)}
+.xfer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:10px 0;border-bottom:1px dotted var(--line)}
+.xfer:last-child{border-bottom:0}
+.xfer .who{overflow-wrap:anywhere}
+.xfer .arrow{color:var(--muted)}
+.xfer .act{grid-column:1/-1;display:flex;justify-content:flex-end}
+.mini{border:1px solid var(--line);background:transparent;border-radius:8px;padding:3px 10px;font-size:12.5px;color:var(--muted)}
+.mini:hover{color:var(--accent);border-color:var(--accent)}
+.done{text-align:center;color:var(--get);font-weight:600;padding:8px 0}
+.rc-actions{display:flex;gap:8px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.legend{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 14px;font-size:13.5px}
+.legend .h{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em}
+.legend .r{text-align:right}
+
+/* Expense list */
+.list{background:var(--card);border-radius:var(--r);overflow:hidden}
+.item{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px;border:0;border-bottom:1px solid var(--line);background:none;width:100%;text-align:left}
+.item:last-child{border-bottom:0}
+.item:hover{background:var(--accent-soft)}
+.cat{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font:600 12px var(--f-display);background:var(--paper);color:var(--muted)}
+.item .t{font-weight:500;overflow-wrap:anywhere}
+.item .s{font-size:12.5px;color:var(--muted)}
+.item.transfer .t{color:var(--muted);font-weight:400}
+.daysep{padding:8px 14px 4px;font-size:12px;color:var(--muted);background:var(--paper);letter-spacing:.04em}
+.empty{padding:28px 18px;text-align:center;color:var(--muted)}
+.empty b{display:block;color:var(--ink);font:600 17px var(--f-display);margin-bottom:4px}
+
+.fab{position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:5;background:var(--accent);color:var(--accent-ink);border:0;border-radius:999px;padding:14px 22px;font:600 16px var(--f-display);box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.modenote{font-size:12px;color:var(--muted);margin-top:24px;text-align:center}
+
+/* Sheet */
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:10;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--card);width:100%;max-width:520px;max-height:92vh;overflow:auto;border-radius:18px 18px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom,0px))}
+@media (min-width:640px){.scrim{align-items:center}.sheet{border-radius:18px;padding:24px}}
+.sheet h3{font:700 20px var(--f-display);margin:0 0 14px}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px}
+.field>label,.lab{font-size:13px;color:var(--muted);font-weight:500}
+.inp{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.inp.big{font:600 24px var(--f-mono);font-variant-numeric:tabular-nums}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.seg{display:flex;flex-wrap:wrap;gap:6px;position:relative}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg label{padding:6px 12px;border:1px solid var(--line);border-radius:999px;font-size:13.5px;cursor:pointer}
+.seg input:checked+label{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.seg input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+.parts{display:flex;flex-direction:column;gap:2px}
+.part{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 2px}
+.part input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
+.part .inp{width:110px;padding:6px 8px;text-align:right}
+.hint{font-size:12.5px;color:var(--muted)}
+.hint.bad{color:var(--owe)}
+.foot{display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:18px;flex-wrap:wrap}
+.foot .r{display:flex;gap:8px;margin-left:auto}
+.memrow{display:flex;gap:8px;align-items:center;padding:4px 0}
+.memrow .inp{flex:1;min-width:0}
+.x{border:0;background:none;color:var(--muted);font-size:20px;line-height:1;padding:4px 8px}
+.x:disabled{opacity:.3;cursor:not-allowed}
+.err{color:var(--owe);font-size:13px;min-height:1em}
+
+.slipbox{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;padding:12px;border:1px dashed var(--line);border-radius:12px}
+.filebtn{position:relative;overflow:hidden;display:inline-block}
+.filebtn input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:100px}
+.filebtn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.pastebox{resize:none;font-size:13px;padding:8px 10px}
+.slipbox.drag{border-color:var(--accent);background:var(--accent-soft)}
+.sliprow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.slipthumb{width:56px;height:72px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
+.slipcard{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:14px}
+.slipcard .k{color:var(--muted);font-size:13px}
+.slipcard .v{overflow-wrap:anywhere;font-weight:500}
+.slipcard .inp{padding:6px 8px}
+.warn{grid-column:1/-1;background:var(--accent-soft);border-radius:8px;padding:8px 10px;font-size:13px}
+.warn.bad{color:var(--owe)}
+.mem{display:flex;flex-direction:column;gap:2px;padding:2px 0}
+.memrow .inp.pp{flex:0 1 130px;min-width:0}
+.qrwrap{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
+.qr{width:min(260px,70vw);height:auto;border-radius:10px;border:1px solid var(--line)}
+.by{font-size:12.5px;color:var(--muted);margin:-8px 0 12px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:10px;font-size:14px;z-index:20;max-width:calc(100% - 32px)}
+.loading{padding:60px 0;text-align:center;color:var(--muted)}
+@media (prefers-reduced-motion:no-preference){.sheet{animation:up .18s ease-out}@keyframes up{from{transform:translateY(16px);opacity:.6}}}
+.me{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.me select{padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);max-width:160px}
+.share{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cfgwarn{background:var(--accent-soft);border-radius:10px;padding:10px 14px;font-size:13.5px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">หารค่าทริป<small>ใครออกก่อน จดไว้ แล้วมาเคลียร์กันทีหลัง</small></div>
+    <select class="trip" id="trip-select" aria-label="เลือกทริป"></select>
+    <button class="btn" id="newtrip-btn" data-act="new-trip">+ ทริปใหม่</button>
+  </header>
+  <div id="app"><div class="loading">กำลังโหลดข้อมูล…</div></div>
+  <div class="modenote" id="modenote"></div>
+</div>
+<button class="fab" id="fab" data-act="add-exp" hidden>+ เพิ่มรายจ่าย</button>
+<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+"use strict";
+const CATS = [
+  {k:"food",  t:"อาหาร",  s:"กิน"},
+  {k:"stay",  t:"ที่พัก",  s:"พัก"},
+  {k:"travel",t:"เดินทาง", s:"รถ"},
+  {k:"fuel",  t:"น้ำมัน",  s:"น้ำมัน"},
+  {k:"fun",   t:"เที่ยว/ตั๋ว", s:"ตั๋ว"},
+  {k:"other", t:"อื่นๆ",   s:"อื่น"},
+];
+const catOf = k => CATS.find(c=>c.k===k) || CATS[5];
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+const today = () => { const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+function fmt(s){ const neg=s<0; s=Math.abs(Math.round(s)); const b=Math.floor(s/100), st=s%100; let t=b.toLocaleString("en-US"); if(st) t+="."+String(st).padStart(2,"0"); return (neg?"-":"")+"฿"+t; }
+function toSatang(v){ const n=parseFloat(String(v).replace(/,/g,"")); return isFinite(n)?Math.round(n*100):NaN; }
+const TH_MON=["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+function thDate(iso){ if(!iso) return ""; const [y,m,d]=iso.split("-").map(Number); return d+" "+TH_MON[m-1]+" "+String(y+543).slice(2); }
+function lsGet(k,f){ try{ const v=localStorage.getItem(k); return v==null?f:JSON.parse(v);}catch{ return f; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} }
+function rid(n=22){ const a="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"; const b=new Uint8Array(n); crypto.getRandomValues(b); return [...b].map(x=>a[x%a.length]).join(""); }
+const CFG = window.TRIPSPLIT_CONFIG || {};
+const hasFirebase = !!(CFG.firebase && CFG.firebase.apiKey && CFG.firebase.projectId);
+
+/* Trips this browser has opened (a trip is reachable only by its link) */
+const Joined = {
+  list(){ return lsGet("tripsplit.joined",[]); },
+  add(id){ const l=this.list(); if(!l.includes(id)){ l.push(id); lsSet("tripsplit.joined",l); } },
+  remove(id){ lsSet("tripsplit.joined",this.list().filter(x=>x!==id)); }
+};
+/* Which member "I" am in each trip (per browser) */
+const Me = {
+  get(tid){ return lsGet("tripsplit.me",{})[tid]||""; },
+  set(tid,mid){ const m=lsGet("tripsplit.me",{}); if(mid) m[tid]=mid; else delete m[tid]; lsSet("tripsplit.me",m); }
+};
+
+/* ---------- Storage: Firestore when configured, this browser otherwise ---------- */
+const FB_VER = "10.12.2";
+const Store = {
+  mode:"local", db:null, fs:null, uid:null,
+  async init(){
+    if(!hasFirebase) return;
+    try{
+      const B=`https://www.gstatic.com/firebasejs/${FB_VER}/`;
+      const [appMod, authMod, fs] = await Promise.all([import(B+"firebase-app.js"), import(B+"firebase-auth.js"), import(B+"firebase-firestore.js")]);
+      const app = appMod.initializeApp(CFG.firebase);
+      let db;
+      try{ db = fs.initializeFirestore(app, {localCache: fs.persistentLocalCache({tabManager: fs.persistentMultipleTabManager()})}); }
+      catch{ db = fs.getFirestore(app); }
+      const auth = authMod.getAuth(app);
+      this.uid = await new Promise((res,rej)=>{
+        const un = authMod.onAuthStateChanged(auth, u=>{ if(u){ un(); res(u.uid); } });
+        authMod.signInAnonymously(auth).catch(rej);
+      });
+      this.fs=fs; this.db=db; this.mode="cloud";
+    }catch(e){ console.error("Firebase init failed", e); this.mode="error"; }
+  },
+  // Writes resolve quickly so the UI never hangs offline; Firestore syncs when back online.
+  _w(p){ p.catch(e=>dbErr(e)); return Promise.race([p, new Promise(r=>setTimeout(r,700))]); },
+
+  // ---- local backend (no Firebase config) ----
+  _l: null, _ll: {trips:null, exp:new Map()},
+  _load(){ if(!this._l) this._l = lsGet("tripsplit.local",{trips:{},exps:{}}); return this._l; },
+  _save(){ lsSet("tripsplit.local",this._l); this._emit(); },
+  _emit(){ const L=this._load();
+    if(this._ll.trips) this._ll.trips(Object.entries(L.trips).map(([id,v])=>({id,...v})));
+    this._ll.exp.forEach((cb,tid)=>cb(Object.entries(L.exps[tid]||{}).map(([id,v])=>({id,...v}))));
+  },
+
+  // ---- trips ----
+  _tripCb:null, _tUnsub:new Map(), _tData:new Map(),
+  subTrips(cb){
+    if(!this.db){ this._ll.trips=cb; this._emit(); return; }
+    this._tripCb=cb; this.syncTrips();
+  },
+  syncTrips(){
+    if(!this.db){ this._emit(); return; }
+    const {doc,onSnapshot}=this.fs, ids=Joined.list();
+    for(const [id,un] of this._tUnsub) if(!ids.includes(id)){ un(); this._tUnsub.delete(id); this._tData.delete(id); }
+    for(const id of ids) if(!this._tUnsub.has(id)){
+      this._tUnsub.set(id, onSnapshot(doc(this.db,"trips",id),
+        snap=>{ if(!snap.exists() && snap.metadata.fromCache) return; this._tData.set(id, snap.exists()?{id,...snap.data()}:{id,missing:true}); this._emitTrips(); },
+        ()=>{ this._tData.set(id,{id,missing:true}); this._emitTrips(); }));
+    }
+    this._emitTrips();
+    clearTimeout(this._tTimer); this._tTimer=setTimeout(()=>this._emitTrips(true),6000);
+  },
+  _emitTrips(force){
+    const ids=Joined.list();
+    if(!force && !ids.every(id=>this._tData.has(id))) return;
+    const gone=[...this._tData.values()].filter(t=>t.missing).map(t=>t.id);
+    gone.forEach(id=>{ Joined.remove(id); const un=this._tUnsub.get(id); un&&un(); this._tUnsub.delete(id); this._tData.delete(id); });
+    this._tripCb && this._tripCb([...this._tData.values()].filter(t=>t.name));
+  },
+  subExps(tid,cb,err){
+    if(this.db){ const {collection,onSnapshot}=this.fs;
+      return onSnapshot(collection(this.db,"trips",tid,"expenses"), s=>cb(s.docs.map(d=>({id:d.id,...d.data()}))), err); }
+    this._ll.exp.clear(); this._ll.exp.set(tid,cb);
+    const L=this._load(); setTimeout(()=>{ if(this._ll.exp.get(tid)===cb) cb(Object.entries(L.exps[tid]||{}).map(([id,v])=>({id,...v}))); },0);
+    return ()=>{ if(this._ll.exp.get(tid)===cb) this._ll.exp.delete(tid); };
+  },
+  newTripId(){ return this.db ? rid(22) : uid(); },
+  isOwner(t){ return !this.db || !t.owner || t.owner===this.uid; },
+  async saveTrip(id,data,isNew){
+    if(this.db){ const {doc,setDoc}=this.fs;
+      if(isNew){ Joined.add(id); data={...data, owner:this.uid}; }
+      const p=this._w(setDoc(doc(this.db,"trips",id), data, {merge:true}));
+      if(isNew) this.syncTrips();
+      return p; }
+    const L=this._load(); L.trips[id]={...(L.trips[id]||{}),...data}; this._save();
+  },
+  async delTrip(id,expIds){
+    if(this.db){ const {doc,writeBatch}=this.fs; const b=writeBatch(this.db);
+      expIds.forEach(e=>b.delete(doc(this.db,"trips",id,"expenses",e))); b.delete(doc(this.db,"trips",id));
+      const p=b.commit(); await p; Joined.remove(id); this.syncTrips(); return; }
+    const L=this._load(); delete L.trips[id]; delete L.exps[id]; this._save();
+  },
+  leaveTrip(id){ Joined.remove(id); Me.set(id,""); this.syncTrips(); },
+  async saveExp(tid,id,data){
+    if(this.db){ const {doc,setDoc}=this.fs; return this._w(setDoc(doc(this.db,"trips",tid,"expenses",id),data)); }
+    const L=this._load(); (L.exps[tid] ||= {})[id]=data; this._save();
+  },
+  async delExp(tid,id){
+    if(this.db){ const {doc,deleteDoc}=this.fs; return this._w(deleteDoc(doc(this.db,"trips",tid,"expenses",id))); }
+    const L=this._load(); if(L.exps[tid]) delete L.exps[tid][id]; this._save();
+  }
+};
+const canWrite = () => true;
+const RO_MSG = "";
+
+/* ---------- State ---------- */
+const st = { trips:[], cur: lsGet("tripsplit.cur",null), exps:[], loaded:false, expLoaded:false };
+let unsubExp = null;
+const trip = () => st.trips.find(t=>t.id===st.cur);
+const mname = (t,id) => (t.members.find(m=>m.id===id)||{}).name || "?";
+
+function toast(msg){ const el=$("#toast"); el.textContent=msg; el.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>el.hidden=true,2600); }
+function dbErr(e){
+  console.error(e);
+  const c=e&&e.code;
+  if(c==="permission-denied") toast("ไม่มีสิทธิ์ทำรายการนี้");
+  else if(c==="resource-exhausted") toast("ใช้งานเกินโควตาฐานข้อมูลวันนี้ ลองใหม่พรุ่งนี้");
+  else toast("บันทึกไม่สำเร็จ ลองอีกครั้ง");
+}
+
+function selectTrip(id){
+  st.cur=id; lsSet("tripsplit.cur",id);
+  try{ history.replaceState(null,"", id && Store.db ? "#/t/"+id : location.pathname+location.search); }catch{}
+  if(unsubExp){ unsubExp(); unsubExp=null; }
+  st.exps=[]; st.expLoaded=false;
+  if(id){ unsubExp = Store.subExps(id, list=>{ st.exps=list; st.expLoaded=true; render(); }, ()=>toast("โหลดรายการไม่สำเร็จ")); }
+  render();
+}
+
+/* ---------- Money math ---------- */
+function equalShares(amount, ids){
+  const n=ids.length; if(!n) return {};
+  const base=Math.floor(amount/n); let rem=amount-base*n; const out={};
+  ids.forEach(id=>{ out[id]=base+(rem>0?1:0); if(rem>0) rem--; });
+  return out;
+}
+function compute(t, exps){
+  const paid={}, owed={}, net={};
+  t.members.forEach(m=>{paid[m.id]=0;owed[m.id]=0;net[m.id]=0;});
+  let total=0;
+  for(const e of exps){
+    if(!(e.payer in net)) continue;
+    if(e.kind==="transfer"){ if(e.to in net){ net[e.payer]+=e.amount; net[e.to]-=e.amount; } continue; }
+    total+=e.amount;
+    const pz = e.payers && Object.keys(e.payers).length ? e.payers : {[e.payer]:e.amount};
+    for(const [m,v] of Object.entries(pz)) if(m in net){ paid[m]+=v; net[m]+=v; }
+    for(const [m,s] of Object.entries(e.shares||{})){ if(m in net){ owed[m]+=s; net[m]-=s; } }
+  }
+  const deb=[],cre=[];
+  for(const k in net){ if(net[k]<0) deb.push([k,-net[k]]); else if(net[k]>0) cre.push([k,net[k]]); }
+  deb.sort((a,b)=>b[1]-a[1]); cre.sort((a,b)=>b[1]-a[1]);
+  const xfers=[]; let i=0,j=0;
+  while(i<deb.length && j<cre.length){
+    const a=Math.min(deb[i][1],cre[j][1]);
+    if(a>0) xfers.push({from:deb[i][0],to:cre[j][0],amt:a});
+    deb[i][1]-=a; cre[j][1]-=a;
+    if(deb[i][1]===0) i++; if(cre[j][1]===0) j++;
+  }
+  return {paid,owed,net,total,xfers};
+}
+
+/* ---------- Render ---------- */
+function renderSelect(){
+  const sel=$("#trip-select");
+  const trips=[...st.trips].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  sel.innerHTML = trips.length ? trips.map(t=>`<option value="${esc(t.id)}"${t.id===st.cur?" selected":""}>${esc(t.name)}</option>`).join("") : `<option>ยังไม่มีทริป</option>`;
+  sel.disabled = !trips.length;
+}
+function render(){
+  renderSelect();
+  const app=$("#app"), t=trip();
+  $("#modenote").textContent = Store.mode==="cloud"
+    ? "ซิงก์ออนไลน์ · ใครมีลิงก์ทริปก็เปิดดูและเพิ่มรายการได้ · ไม่มีเน็ตก็จดได้ จะซิงก์ให้เมื่อออนไลน์"
+    : Store.mode==="error" ? "เชื่อมต่อฐานข้อมูลไม่สำเร็จ ตอนนี้ข้อมูลบันทึกเฉพาะในเบราว์เซอร์นี้"
+    : "ยังไม่ได้ตั้งค่า Firebase: ข้อมูลบันทึกเฉพาะในเบราว์เซอร์นี้";
+  const W = canWrite();
+  $("#fab").hidden = !t || !W;
+  $("#newtrip-btn").hidden = !W;
+  if(!st.loaded){ app.innerHTML=`<div class="loading">กำลังโหลดข้อมูล…</div>`; return; }
+  if(!t){
+    app.innerHTML = `<div class="list"><div class="empty"><b>ยังไม่มีทริป</b>สร้างทริป ใส่ชื่อเพื่อนที่ไปด้วย แล้วส่งลิงก์ทริปให้เพื่อนเข้ามาจดด้วยกัน<br>ถ้าเพื่อนส่งลิงก์มา กดเปิดลิงก์นั้นได้เลย<div style="margin-top:14px"><button class="btn pri" data-act="new-trip">+ สร้างทริปแรก</button></div></div></div>`;
+    return;
+  }
+  const c = compute(t, st.exps);
+  const n = t.members.length;
+  const exps = [...st.exps].sort((a,b)=> (b.date||"").localeCompare(a.date||"") || (b.createdAt||0)-(a.createdAt||0));
+
+  // receipt
+  let xf;
+  if(!st.exps.some(e=>e.kind!=="transfer")) xf = `<div class="rc-sub">ยังไม่มีรายจ่าย</div>`;
+  else if(!c.xfers.length) xf = `<div class="done">✓ เคลียร์ครบแล้ว ไม่มีใครค้างใคร</div>`;
+  else xf = c.xfers.map((x,i)=>`<div class="xfer">
+      <div class="who"><b>${esc(mname(t,x.from))}</b> <span class="arrow">→ โอนให้</span> <b>${esc(mname(t,x.to))}</b></div>
+      <div class="num">${fmt(x.amt)}</div>
+      <div class="act" style="gap:6px">${(t.members.find(m=>m.id===x.to)||{}).pp?`<button class="mini" data-act="qr" data-i="${i}">QR พร้อมเพย์</button>`:""}${W?`<button class="mini" data-act="settle" data-i="${i}">โอนแล้ว ✓</button>`:""}</div></div>`).join("");
+
+  const legend = t.members.map(m=>{ const v=c.net[m.id]; return `
+      <div class="who">${esc(m.name)}</div><div class="r num">${fmt(c.paid[m.id])}</div>
+      <div class="r num ${v>0?"pos":v<0?"neg":""}">${v>0?"+":""}${fmt(v)}</div>`; }).join("");
+
+  const receipt = `<aside class="receipt">
+      <div class="rc-title">สรุปค่าใช้จ่าย</div>
+      <div class="rc-total"><span class="num">${fmt(c.total)}</span></div>
+      <div class="rc-sub">${n} คน · เฉลี่ยคนละ <span class="num">${fmt(n?Math.round(c.total/n):0)}</span></div>
+      <hr class="perf">
+      <h2 class="sec">ใครต้องโอนให้ใคร</h2>
+      ${xf}
+      <hr class="perf">
+      <div class="legend"><div class="h">ชื่อ</div><div class="h r">จ่ายไป</div><div class="h r">ยอดสุทธิ</div>${legend}</div>
+      <div class="rc-sub" style="margin-top:8px;font-size:12px">+ คือได้เงินคืน · − คือต้องโอนเพิ่ม</div>
+      <div class="rc-actions"><button class="btn" data-act="copy">คัดลอกสรุปส่งไลน์</button></div>
+    </aside>`;
+
+  // list
+  let rows="", lastDay=null;
+  for(const e of exps){
+    if(e.date!==lastDay){ rows+=`<div class="daysep">${esc(thDate(e.date))}</div>`; lastDay=e.date; }
+    if(e.kind==="transfer"){
+      rows+=`<button class="item transfer" data-act="edit-exp" data-id="${esc(e.id)}"><div class="cat">โอน</div>
+        <div><div class="t">${esc(mname(t,e.payer))} โอนให้ ${esc(mname(t,e.to))}</div><div class="s">เคลียร์หนี้${e.slipRef?" · มีสลิป":""}</div></div>
+        <div class="num">${fmt(e.amount)}</div></button>`;
+    } else {
+      const cnt=Object.keys(e.shares||{}).length, cat=catOf(e.cat);
+      rows+=`<button class="item" data-act="edit-exp" data-id="${esc(e.id)}"><div class="cat">${esc(cat.s)}</div>
+        <div><div class="t">${esc(e.desc||cat.t)}</div><div class="s">${esc(e.payers&&Object.keys(e.payers).length>1?Object.keys(e.payers).map(id=>mname(t,id)).join(", "):mname(t,e.payer))} จ่าย · ${e.mode==="custom"?"แบ่งตามจริง ":"หาร "}${cnt} คน${e.slipRef?" · มีสลิป":""}</div></div>
+        <div class="num">${fmt(e.amount)}</div></button>`;
+    }
+  }
+  const list = st.expLoaded && !exps.length
+    ? `<div class="empty"><b>ยังไม่มีรายการ</b>ใครจ่ายอะไรไป กด “+ เพิ่มรายจ่าย” ด้านล่างได้เลย</div>`
+    : (rows || `<div class="empty">กำลังโหลด…</div>`);
+
+  const me = Me.get(t.id);
+  app.innerHTML = `<div class="grid">
+    ${receipt}
+    <div class="main">
+      <div class="triphead">
+        <h1>${esc(t.name)}</h1>
+        <div class="chips">${t.members.map(m=>`<span class="chip">${esc(m.name)}</span>`).join("")}
+          <button class="chip add" data-act="edit-trip">แก้ไขทริป / เพิ่มคน / พร้อมเพย์</button></div>
+        <div class="share">
+          <label class="me">ฉันคือ <select id="me-sel" aria-label="ฉันคือใครในทริปนี้"><option value="">เลือกชื่อ</option>${t.members.map(m=>`<option value="${esc(m.id)}" ${me===m.id?"selected":""}>${esc(m.name)}</option>`).join("")}</select></label>
+          ${Store.db?`<button class="btn" data-act="share" style="margin-left:auto">ส่งลิงก์ทริปให้เพื่อน</button>`:""}
+        </div>
+      </div>
+      <section><h2 class="sec">รายการ (${exps.length})</h2><div class="list">${list}</div></section>
+    </div></div>`;
+}
+
+/* ---------- Sheets ---------- */
+function openSheet(html, onMount){ $("#sheet").innerHTML=html; $("#scrim").hidden=false; onMount&&onMount(); const f=$("#sheet").querySelector("input,select"); f&&f.focus({preventScroll:true}); }
+function closeSheet(){ $("#scrim").hidden=true; $("#sheet").innerHTML=""; }
+
+function ppValid(v){ return v==="" || /^0\d{9}$/.test(v) || /^\d{13}$/.test(v) || /^\d{15}$/.test(v); }
+function tripSheet(edit){
+  if(edit && !canWrite()) return toast(RO_MSG);
+  const t = edit ? trip() : null;
+  let members = t ? t.members.map(m=>({...m})) : [{id:uid(),name:""},{id:uid(),name:""}];
+  const used = new Set();
+  if(t) st.exps.forEach(e=>{ used.add(e.payer); if(e.to) used.add(e.to); Object.keys(e.shares||{}).forEach(k=>used.add(k)); Object.keys(e.payers||{}).forEach(k=>used.add(k)); });
+  let armed=false;
+  const draw = () => {
+    $("#mems").innerHTML = members.map((m,i)=>`<div class="mem">
+      <div class="memrow">
+        <input class="inp nm" id="mem-${esc(m.id)}" data-i="${i}" value="${esc(m.name)}" placeholder="ชื่อเพื่อน" aria-label="ชื่อคนที่ ${i+1}">
+        <input class="inp pp num" id="pp-${esc(m.id)}" data-i="${i}" value="${esc(m.pp||"")}" inputmode="numeric" placeholder="พร้อมเพย์" aria-label="พร้อมเพย์ของคนที่ ${i+1} (ไม่บังคับ)">
+        <button class="x" data-rm="${i}" ${used.has(m.id)?"disabled title=\"มีรายการของคนนี้อยู่ ลบไม่ได้\"":""} aria-label="ลบ">×</button></div>
+      ${m.aliases&&m.aliases.length?`<div class="hint">ชื่อในสลิป: ${m.aliases.map(esc).join(", ")}</div>`:""}</div>`).join("");
+  };
+  openSheet(`<h3>${t?"แก้ไขทริป":"ทริปใหม่"}</h3>
+    <div class="field"><label for="t-name">ชื่อทริป</label><input class="inp" id="t-name" value="${esc(t?t.name:"")}" placeholder="เช่น เขาใหญ่ 2 วัน 1 คืน"></div>
+    <div class="field"><span class="lab">คนที่ไปด้วย (รวมตัวเอง)</span>
+      <span class="hint">พร้อมเพย์ไม่บังคับ ใส่เบอร์มือถือหรือเลขบัตรประชาชน เพื่อสร้าง QR ให้เพื่อนสแกนโอนตอนเคลียร์เงิน</span>
+      <div id="mems"></div>
+      <button class="btn ghost" type="button" id="addmem" style="align-self:flex-start;margin-top:4px">+ เพิ่มคน</button></div>
+    <div class="err" id="t-err"></div>
+    <div class="foot">${t?(Store.isOwner(t)?`<button class="btn danger" id="t-del">ลบทริป</button>`:`<button class="btn danger" id="t-leave">ออกจากทริปนี้</button>`):""}
+      <div class="r"><button class="btn ghost" data-act="close">ยกเลิก</button><button class="btn pri" id="t-save">บันทึก</button></div></div>`, draw);
+  const sync = () => {
+    $("#mems").querySelectorAll("input.nm").forEach(inp=>members[+inp.dataset.i].name=inp.value);
+    $("#mems").querySelectorAll("input.pp").forEach(inp=>members[+inp.dataset.i].pp=inp.value.replace(/[\s-]/g,""));
+  };
+  $("#addmem").onclick = () => { sync(); members.push({id:uid(),name:""}); draw(); const ins=$("#mems").querySelectorAll("input.nm"); ins[ins.length-1].focus(); };
+  $("#mems").onclick = e => { const b=e.target.closest("[data-rm]"); if(!b||b.disabled) return; sync(); members.splice(+b.dataset.rm,1); draw(); };
+  $("#t-save").onclick = async () => {
+    sync();
+    const name=$("#t-name").value.trim();
+    const mem=members.map(m=>{ const o={...m,name:m.name.trim()}; if(!o.pp) delete o.pp; return o; }).filter(m=>m.name || used.has(m.id));
+    if(!name) return $("#t-err").textContent="ใส่ชื่อทริปก่อน";
+    if(mem.length<2) return $("#t-err").textContent="ต้องมีอย่างน้อย 2 คน";
+    if(mem.some(m=>!m.name)) return $("#t-err").textContent="ชื่อคนว่างอยู่";
+    const bad=mem.find(m=>!ppValid(m.pp||""));
+    if(bad) return $("#t-err").textContent=`พร้อมเพย์ของ ${bad.name} ไม่ถูกต้อง (เบอร์มือถือ 10 หลัก หรือเลขบัตร 13 หลัก)`;
+    const id = t ? t.id : Store.newTripId();
+    try{ await Store.saveTrip(id,{name,members:mem,createdAt:t?t.createdAt:Date.now()}, !t); closeSheet();
+      if(!t){ selectTrip(id); if(Store.db) toast("สร้างทริปแล้ว กด “ส่งลิงก์ทริปให้เพื่อน” เพื่อชวนเพื่อนมาจด"); } }
+    catch(e){ dbErr(e); }
+  };
+  if(t && $("#t-leave")) $("#t-leave").onclick = () => {
+    if(!armed){ armed=true; $("#t-leave").textContent="แตะอีกครั้ง (เปิดลิงก์เดิมเพื่อกลับเข้ามาได้)"; return; }
+    Store.leaveTrip(t.id); closeSheet(); const next=st.trips.find(x=>x.id!==t.id); selectTrip(next?next.id:null); toast("ออกจากทริปแล้ว");
+  };
+  if(t && $("#t-del")) $("#t-del").onclick = async () => {
+    if(!armed){ armed=true; $("#t-del").textContent="แตะอีกครั้ง ลบทั้งทริปสำหรับทุกคน"; return; }
+    try{ await Store.delTrip(t.id, st.exps.map(e=>e.id)); closeSheet(); const next=st.trips.find(x=>x.id!==t.id); selectTrip(next?next.id:null); toast("ลบทริปแล้ว"); }
+    catch(e){ dbErr(e); }
+  };
+}
+
+/* ---------- PromptPay QR (EMVCo payload, Thai QR standard) ---------- */
+function crc16(s){ let c=0xFFFF; for(let i=0;i<s.length;i++){ c^=s.charCodeAt(i)<<8; for(let j=0;j<8;j++) c=(c&0x8000)?((c<<1)^0x1021)&0xFFFF:(c<<1)&0xFFFF; } return c.toString(16).toUpperCase().padStart(4,"0"); }
+function tlv(id,v){ return id+String(v.length).padStart(2,"0")+v; }
+function promptPayPayload(target, satang){
+  let acct;
+  if(/^0\d{9}$/.test(target)) acct=tlv("01","0066"+target.slice(1));
+  else if(/^\d{13}$/.test(target)) acct=tlv("02",target);
+  else acct=tlv("03",target);
+  let p = tlv("00","01") + tlv("01", satang?"12":"11") + tlv("29", tlv("00","A000000677010111")+acct) + tlv("58","TH") + tlv("53","764");
+  if(satang) p += tlv("54",(satang/100).toFixed(2));
+  p += "6304";
+  return p + crc16(p);
+}
+function qrSvg(text){
+  if(typeof window.qrcode!=="function") return null;
+  const q=window.qrcode(0,"M"); q.addData(text); q.make();
+  const n=q.getModuleCount(), pad=4, size=n+pad*2;
+  let d=""; for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(q.isDark(r,c)) d+=`M${c+pad},${r+pad}h1v1h-1z`;
+  return `<svg viewBox="0 0 ${size} ${size}" class="qr" role="img" aria-label="QR พร้อมเพย์" shape-rendering="crispEdges"><rect width="${size}" height="${size}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+function qrSheet(i){
+  const t=trip(); const x=compute(t,st.exps).xfers[i]; if(!x) return;
+  const to=t.members.find(m=>m.id===x.to);
+  if(!to || !to.pp) return toast("ยังไม่มีพร้อมเพย์ของ "+mname(t,x.to)+" เพิ่มได้ที่ แก้ไขทริป");
+  const svg=qrSvg(promptPayPayload(to.pp,x.amt));
+  const masked = to.pp.length===10 ? to.pp.slice(0,3)+"-xxx-"+to.pp.slice(6) : "x".repeat(to.pp.length-4)+to.pp.slice(-4);
+  openSheet(`<h3>สแกนโอนให้ ${esc(to.name)}</h3>
+    <div class="qrwrap">${svg||`<p class="hint bad">โหลดตัวสร้าง QR ไม่สำเร็จ ลองเปิดหน้าใหม่</p>`}
+      <div class="num" style="font-size:26px;font-weight:600">${fmt(x.amt)}</div>
+      <div class="hint">${esc(mname(t,x.from))} → ${esc(to.name)} · พร้อมเพย์ ${esc(masked)}</div>
+      <div class="hint">สแกนด้วยแอปธนาคาร ยอดจะขึ้นให้อัตโนมัติ ตรวจชื่อผู้รับในแอปก่อนกดยืนยัน</div></div>
+    <div class="foot"><button class="btn ghost" data-act="close">ปิด</button>
+      <div class="r">${canWrite()?`<button class="btn pri" data-act="settle" data-i="${i}">โอนแล้ว ✓</button>`:""}</div></div>`);
+}
+
+/* ---------- Slip reading ----------
+   1) Always: decode the QR printed on Thai e-slips in the browser (free) -> transaction ref, for duplicate checks.
+   2) Optional: if CFG.slipApiUrl is set, send the image to your own backend, which reads amount/names/date with AI. */
+const Slip = { ok:true, ai: !!CFG.slipApiUrl, accept:"image/*" };
+function parseTLV(s){
+  const out={}; let i=0;
+  while(i+4<=s.length){ const id=s.substr(i,2), len=parseInt(s.substr(i+2,2),10); if(!(len>=0) || i+4+len>s.length) return null; out[id]=s.substr(i+4,len); i+=4+len; }
+  return i===s.length ? out : null;
+}
+function slipQrRef(text){
+  // Thai bank slip mini-QR: 00{ 00:API id, 01:sending bank, 02:transaction ref } 51:TH 91:CRC
+  const top=parseTLV(text||""); if(top && top["00"]){ const inner=parseTLV(top["00"]); if(inner && inner["02"]) return {ref:inner["02"], bank:inner["01"]||""}; }
+  return text ? {ref:text.slice(0,80), bank:""} : null;
+}
+async function loadBitmap(file){
+  if(window.createImageBitmap){ try{ return await createImageBitmap(file); }catch{} }
+  return await new Promise((res,rej)=>{ const img=new Image(); img.onload=()=>res(img); img.onerror=rej; img.src=URL.createObjectURL(file); });
+}
+async function decodeSlipQr(file){
+  if(typeof window.jsQR!=="function") return null;
+  const bmp=await loadBitmap(file); const W=bmp.width, H=bmp.height;
+  const tries=[[0,0,W,H,1400],[W*0.45,H*0.35,W*0.55,H*0.65,900],[0,H*0.4,W,H*0.6,1200]];
+  for(const [sx,sy,sw,sh,max] of tries){
+    const sc=Math.min(1,max/Math.max(sw,sh)), w=Math.round(sw*sc), h=Math.round(sh*sc);
+    const c=document.createElement("canvas"); c.width=w; c.height=h; const g=c.getContext("2d",{willReadFrequently:true});
+    g.drawImage(bmp,sx,sy,sw,sh,0,0,w,h);
+    const r=window.jsQR(g.getImageData(0,0,w,h).data,w,h,{inversionAttempts:"dontInvert"});
+    if(r && r.data) return slipQrRef(r.data);
+  }
+  return null;
+}
+async function slipAi(file,t,signal){
+  const fd=new FormData();
+  fd.append("image",file);
+  fd.append("members",JSON.stringify(t.members.map(m=>({id:m.id,nickname:m.name,names_seen_on_slips:m.aliases||[]}))));
+  const r=await fetch(CFG.slipApiUrl,{method:"POST",body:fd,signal});
+  if(!r.ok) throw Object.assign(new Error("http "+r.status),{status:r.status});
+  return await r.json();
+}
+async function learnNames(t, pairs){
+  let changed=false;
+  const members=t.members.map(m=>({...m, aliases:[...(m.aliases||[])]}));
+  for(const [id,nm] of pairs){
+    const n=String(nm||"").trim(); const m=members.find(x=>x.id===id);
+    if(m && n && n!==m.name && !m.aliases.includes(n)){ m.aliases.push(n); changed=true; }
+  }
+  if(changed) await Store.saveTrip(t.id,{members});
+}
+
+function expSheet(id){
+  const t=trip(); if(!t) return;
+  const e = id ? st.exps.find(x=>x.id===id) : null;
+  let armed=false;
+  const slipInfo = x => x.slipRef||x.slipFrom ? `<p class="hint">จากสลิป${x.slipFrom?` · ผู้โอน ${esc(x.slipFrom)}`:""}${x.slipTo?` · ผู้รับ ${esc(x.slipTo)}`:""}${x.slipRef?`<br>เลขที่รายการ ${esc(x.slipRef)}`:""}</p>` : "";
+  if(e && e.kind==="transfer"){
+    openSheet(`<h3>รายการโอน</h3><p>${esc(mname(t,e.payer))} โอนให้ ${esc(mname(t,e.to))} <span class="num">${fmt(e.amount)}</span><br><span class="hint">${esc(thDate(e.date))}</span></p>${slipInfo(e)}
+      <div class="foot"><button class="btn danger" id="x-del">ลบรายการนี้</button><div class="r"><button class="btn ghost" data-act="close">ปิด</button></div></div>`);
+    $("#x-del").onclick = async () => {
+      if(!armed){ armed=true; $("#x-del").textContent="แตะอีกครั้งเพื่อลบ"; return; }
+      try{ await Store.delExp(t.id,e.id); closeSheet(); }catch(err){ dbErr(err); } };
+    return;
+  }
+  const mode = e ? (e.mode||"equal") : "equal";
+  const inSplit = id => e ? (id in (e.shares||{})) : true;
+  let slip = null;   // what was read from the attached slip
+  openSheet(`<h3>${e?"แก้ไขรายจ่าย":"เพิ่มรายจ่าย"}</h3>${e&&e.addedBy?`<div class="by" id="addedby"></div>`:""}
+    ${e ? slipInfo(e) : `<div class="slipbox" id="slipbox">
+      <div class="sliprow"><span class="filebtn btn">แนบสลิปโอนเงิน<input type="file" id="f-slip" accept="${esc(Slip.accept)}" aria-label="แนบสลิปโอนเงิน"></span><span class="hint">${Slip.ai?"อ่านยอด ชื่อผู้โอน และวันที่ให้อัตโนมัติ":"อ่านเลขรายการจาก QR บนสลิป กันบันทึกซ้ำ"} · หรือลากรูปมาวาง / Ctrl+V</span></div>
+      <textarea class="inp pastebox" id="f-paste" rows="1" placeholder="หรือคัดลอกรูปสลิป แล้วแตะค้างตรงนี้ เลือก “วาง”" aria-label="วางรูปสลิป"></textarea>
+      <div id="slip-out"></div></div>`}
+    <div class="field"><label for="f-amount">จำนวนเงิน (บาท)</label><input class="inp big" id="f-amount" inputmode="decimal" placeholder="0" value="${e?(e.amount/100):""}"></div>
+    <div class="field"><label for="f-desc">จ่ายค่าอะไร</label><input class="inp" id="f-desc" placeholder="เช่น หมูกระทะคืนแรก" value="${esc(e?e.desc:"")}"></div>
+    <div class="row2">
+      <div class="field"><label for="f-payer">ใครออกเงิน</label><select class="inp" id="f-payer">${t.members.map(m=>`<option value="${esc(m.id)}" ${(e?e.payer:Me.get(t.id))===m.id?"selected":""}>${esc(m.name)}</option>`).join("")}<option value="__multi" ${e&&e.payers&&Object.keys(e.payers).length>1?"selected":""}>หลายคนช่วยกันจ่าย…</option></select></div>
+      <div class="field"><label for="f-date">วันที่</label><input class="inp" type="date" id="f-date" value="${esc(e?e.date:today())}"></div>
+    </div>
+    <div id="multipay" hidden><span class="lab">แต่ละคนจ่ายไปเท่าไหร่</span>
+      <div class="parts">${t.members.map(m=>`<label class="part"><span></span><span>${esc(m.name)}</span><input class="inp num mp" id="mp-${esc(m.id)}" data-m="${esc(m.id)}" inputmode="decimal" placeholder="0" value="${e&&e.payers&&e.payers[m.id]?e.payers[m.id]/100:""}"></label>`).join("")}</div>
+      <div class="hint" id="mp-hint" style="margin-bottom:14px"></div></div>
+    <div id="splitwrap">
+    <div class="field"><span class="lab">หมวด</span><div class="seg">${CATS.map(c=>`<input type="radio" name="cat" id="cat-${c.k}" value="${c.k}" ${(e?e.cat:"food")===c.k?"checked":""}><label for="cat-${c.k}">${c.t}</label>`).join("")}</div></div>
+    <div class="field"><span class="lab">หารยังไง</span><div class="seg">
+      <input type="radio" name="mode" id="m-eq" value="equal" ${mode==="equal"?"checked":""}><label for="m-eq">หารเท่ากัน</label>
+      <input type="radio" name="mode" id="m-cu" value="custom" ${mode==="custom"?"checked":""}><label for="m-cu">ใส่ยอดแต่ละคนเอง</label></div></div>
+    <div class="parts" id="parts">${t.members.map(m=>`<label class="part">
+      <input type="checkbox" id="p-${esc(m.id)}" data-m="${esc(m.id)}" ${inSplit(m.id)?"checked":""}>
+      <span>${esc(m.name)}</span>
+      <span class="sh"><span class="num eqv" data-m="${esc(m.id)}"></span><input class="inp num cu" id="c-${esc(m.id)}" data-m="${esc(m.id)}" inputmode="decimal" placeholder="0" value="${e&&mode==="custom"&&e.shares[m.id]!=null?e.shares[m.id]/100:""}"></span></label>`).join("")}</div>
+    <div class="hint" id="f-hint"></div>
+    </div>
+    <div class="err" id="f-err"></div>
+    <div class="foot">${e?`<button class="btn danger" id="f-del">ลบ</button>`:""}
+      <div class="r"><button class="btn ghost" data-act="close">ยกเลิก</button><button class="btn pri" id="f-save">บันทึก</button></div></div>`);
+  const S=$("#sheet");
+  const curMode = () => S.querySelector("input[name=mode]:checked").value;
+  const checked = () => [...S.querySelectorAll("#parts input[type=checkbox]")].filter(c=>c.checked).map(c=>c.dataset.m);
+  const recvMember = () => { const r=$("#f-recv"); return r && r.value ? r.value : null; };
+  const upd = () => {
+    const isXfer = !!recvMember();
+    const multi = $("#f-payer").value==="__multi";
+    $("#multipay").hidden = !multi;
+    if(multi){ const amt0=toSatang($("#f-amount").value)||0, sum=[...S.querySelectorAll(".mp")].reduce((a,i)=>a+(toSatang(i.value)||0),0), left=amt0-sum, h=$("#mp-hint");
+      h.textContent = left===0 ? "ยอดที่จ่ายรวมกันตรงกับจำนวนเงินแล้ว" : (left>0?`ยังขาดอีก ${fmt(left)}`:`เกินมา ${fmt(-left)}`); h.className = left===0?"hint":"hint bad"; }
+    $("#splitwrap").hidden = isXfer;
+    $("#f-save").textContent = isXfer ? "บันทึกเป็นการโอนคืน" : "บันทึก";
+    const amt=toSatang($("#f-amount").value)||0, m=curMode(), ids=checked();
+    S.querySelectorAll(".cu").forEach(i=>{ i.hidden = m!=="custom"; i.disabled = !ids.includes(i.dataset.m); });
+    const eq = equalShares(amt, ids);
+    S.querySelectorAll(".eqv").forEach(s=>{ s.hidden = m!=="equal"; s.textContent = ids.includes(s.dataset.m) && amt ? fmt(eq[s.dataset.m]) : "–"; });
+    const h=$("#f-hint"); h.className="hint";
+    if(m==="equal") h.textContent = ids.length ? `หาร ${ids.length} คน` : "เลือกคนที่ต้องหารอย่างน้อย 1 คน";
+    else { const sum=ids.reduce((a,id)=>a+(toSatang($("#c-"+CSS.escape(id)).value)||0),0), left=amt-sum;
+      h.textContent = left===0 ? "ยอดรวมตรงกับจำนวนเงินแล้ว" : (left>0?`ยังเหลือ ${fmt(left)} ที่ยังไม่ได้แบ่ง`:`เกินมา ${fmt(-left)}`);
+      if(left!==0) h.className="hint bad"; }
+  };
+  S.addEventListener("input", upd); S.addEventListener("change", upd); upd();
+  if(e && e.addedBy){ const el=$("#addedby"); const n=(t.members.find(m=>m.id===e.addedBy)||{}).name; if(el) el.textContent = n ? "บันทึกโดย "+n : ""; }
+
+  // ----- slip -----
+  const out = $("#slip-out");
+  let ctl = null, thumbUrl = null;
+  async function readSlip(file){
+    if(!file || !out) return;
+    if(ctl) ctl.abort(); ctl = new AbortController(); const my=ctl;
+    if(thumbUrl) URL.revokeObjectURL(thumbUrl);
+    thumbUrl = URL.createObjectURL(file);
+    out.innerHTML = `<div class="sliprow"><img class="slipthumb" src="${thumbUrl}" alt="สลิปที่แนบ"><span class="hint">กำลังอ่านสลิป…</span></div>`;
+    const [qr, ai] = await Promise.all([
+      decodeSlipQr(file).catch(()=>null),
+      Slip.ai ? slipAi(file,t,my.signal).catch(err=>({_err:err})) : Promise.resolve(null)
+    ]);
+    if(my.signal.aborted || !out.isConnected) return;
+    const aiOk = ai && !ai._err && ai.is_slip;
+    if(!qr && !aiOk){
+      const msg = ai && ai._err ? (ai._err.status===429?"อ่านสลิปถี่เกินไป รอสักครู่แล้วลองใหม่":"อ่านสลิปไม่สำเร็จ กรอกเองได้ตามปกติ")
+        : ai && ai.is_slip===false ? "รูปนี้ไม่น่าใช่สลิปโอนเงิน" : "ไม่พบ QR บนสลิป ลองครอปรูปให้เห็น QR ชัด ๆ หรือกรอกเอง";
+      out.innerHTML = `<div class="sliprow"><img class="slipthumb" src="${thumbUrl}" alt=""><span class="hint bad">${msg}</span></div>`;
+      slip=null; return;
+    }
+    const r = aiOk ? ai : {};
+    const ids = new Set(t.members.map(m=>m.id));
+    slip = {
+      amount: Number(r.amount)>0 ? Math.round(Number(r.amount)*100) : null,
+      date: /^\d{4}-\d{2}-\d{2}$/.test(r.date||"") ? r.date : null,
+      from: r.sender_name ? String(r.sender_name).slice(0,80) : "",
+      to: r.receiver_name ? String(r.receiver_name).slice(0,80) : "",
+      memo: r.memo ? String(r.memo).slice(0,120) : "",
+      ref: (qr && qr.ref) ? String(qr.ref).slice(0,80) : (r.ref ? String(r.ref).slice(0,80) : ""),
+      cat: CATS.some(c=>c.k===r.cat) ? r.cat : null,
+      payer: ids.has(r.payer_id) ? r.payer_id : null,
+      recv: ids.has(r.receiver_id) ? r.receiver_id : null,
+    };
+    if(slip.amount) $("#f-amount").value = slip.amount/100;
+    if(slip.date) $("#f-date").value = slip.date;
+    if(!$("#f-desc").value.trim()) $("#f-desc").value = slip.memo || (slip.to ? "โอนให้ "+slip.to : "");
+    if(slip.cat){ const catEl = S.querySelector("#cat-"+slip.cat); if(catEl) catEl.checked = true; }
+    const payerSel = $("#f-payer");
+    if(aiOk){
+      payerSel.querySelector('option[value=""]')?.remove();
+      if(slip.payer) payerSel.value = slip.payer;
+      else { payerSel.insertAdjacentHTML("afterbegin", `<option value="">— เลือกว่าใครโอน —</option>`); payerSel.value = ""; }
+    }
+    const dup = slip.ref && st.exps.find(x=>x.slipRef===slip.ref);
+    out.innerHTML = `<div class="sliprow" style="align-items:flex-start">
+      <img class="slipthumb" src="${thumbUrl}" alt="สลิปที่แนบ">
+      <div class="slipcard" style="flex:1;min-width:0">
+        ${aiOk ? `<span class="k">ยอด</span><span class="v num">${slip.amount?fmt(slip.amount):"อ่านไม่ได้"}</span>
+        <span class="k">ผู้โอน</span><span class="v">${esc(slip.from||"–")}</span>
+        <span class="k">ผู้รับ</span><span class="v">${esc(slip.to||"–")}</span>` : ""}
+        <span class="k">เลขรายการ</span><span class="v num" style="font-size:12.5px">${slip.ref?esc(slip.ref):"ไม่พบ QR"}</span>
+        <label class="k" for="f-recv">ผู้รับคือ</label>
+        <select class="inp" id="f-recv"><option value="">ร้าน/ที่พัก/คนนอกทริป (เป็นรายจ่าย)</option>${t.members.map(m=>`<option value="${esc(m.id)}" ${slip.recv===m.id?"selected":""}>${esc(m.name)} (โอนคืนในกลุ่ม)</option>`).join("")}</select>
+        ${!aiOk ? `<div class="warn">อ่าน QR บนสลิปได้แล้ว ใส่ยอดเงินและเลือกคนโอนด้านล่าง</div>`
+          : slip.payer ? "" : `<div class="warn">ยังไม่รู้ว่า “${esc(slip.from||"ผู้โอน")}” คือใคร เลือกที่ช่อง “ใครออกเงิน” ด้านล่าง ครั้งหน้าจะจำได้เอง</div>`}
+        ${dup ? `<div class="warn bad">สลิปนี้เคยบันทึกแล้ว (${esc(dup.desc||"รายการโอน")} · ${fmt(dup.amount)})</div>` : ""}
+      </div></div>`;
+    upd();
+  }
+  if(out){
+    $("#f-slip").addEventListener("change", ev => { const f=ev.target.files && ev.target.files[0]; ev.target.value=""; readSlip(f); });
+    $("#f-paste").addEventListener("input", ev=>{ ev.target.value=""; });
+    const box=$("#slipbox");
+    box.addEventListener("dragover", ev=>{ ev.preventDefault(); box.classList.add("drag"); });
+    box.addEventListener("dragleave", ()=>box.classList.remove("drag"));
+    box.addEventListener("drop", ev=>{ ev.preventDefault(); box.classList.remove("drag"); const f=[...(ev.dataTransfer?.files||[])].find(f=>f.type.startsWith("image/")); if(f) readSlip(f); });
+    S.addEventListener("paste", ev => {
+      const it=[...(ev.clipboardData?.items||[])].find(i=>i.type.startsWith("image/"));
+      if(it){ ev.preventDefault(); readSlip(it.getAsFile()); }
+      else if(ev.target && ev.target.id==="f-paste"){ ev.preventDefault(); toast("ที่คัดลอกไว้ไม่ใช่รูป ลองคัดลอกรูปสลิปอีกครั้ง"); }
+    });
+  }
+
+  $("#f-save").onclick = async () => {
+    const err=$("#f-err"); err.textContent="";
+    const amount=toSatang($("#f-amount").value);
+    if(!(amount>0)) return err.textContent="ใส่จำนวนเงินก่อน";
+    let payer=$("#f-payer").value, payers=null;
+    if(!payer) return err.textContent="เลือกว่าใครเป็นคนโอน/ออกเงิน";
+    if(payer==="__multi"){
+      payers={}; let sum=0;
+      S.querySelectorAll(".mp").forEach(i=>{ const v=toSatang(i.value)||0; if(v>0){ payers[i.dataset.m]=v; sum+=v; } });
+      const ks=Object.keys(payers);
+      if(ks.length<2) return err.textContent="ใส่ยอดที่จ่ายอย่างน้อย 2 คน (ถ้าคนเดียวให้เลือกชื่อแทน)";
+      if(sum!==amount) return err.textContent="ยอดที่แต่ละคนจ่ายรวมกันต้องเท่ากับจำนวนเงิน";
+      payer=ks[0];
+    }
+    const date=$("#f-date").value||today();
+    const slipFields = slip ? {slipRef:slip.ref||"", slipFrom:slip.from||"", slipTo:slip.to||""} : {};
+    const recv = recvMember();
+    if(recv){
+      if(payers) return err.textContent="การโอนคืนต้องมีผู้โอนคนเดียว";
+      if(recv===payer) return err.textContent="ผู้โอนกับผู้รับเป็นคนเดียวกัน";
+      try{
+        await Store.saveExp(t.id, uid(), {kind:"transfer",payer,to:recv,amount,date,...slipFields,addedBy:Me.get(t.id),createdAt:Date.now()});
+        closeSheet(); toast("บันทึกการโอนคืนแล้ว");
+        if(slip) learnNames(t, [[payer,slip.from],[recv,slip.to]]).catch(()=>{});
+      }catch(x){ dbErr(x); }
+      return;
+    }
+    const ids=checked(); if(!ids.length) return err.textContent="เลือกคนที่ต้องหารอย่างน้อย 1 คน";
+    const m=curMode(); let shares;
+    if(m==="equal") shares=equalShares(amount,ids);
+    else { shares={}; let sum=0; for(const id of ids){ const v=toSatang($("#c-"+CSS.escape(id)).value)||0; shares[id]=v; sum+=v; }
+      if(sum!==amount) return err.textContent="ยอดของแต่ละคนรวมกันต้องเท่ากับจำนวนเงิน"; }
+    const cat=S.querySelector("input[name=cat]:checked").value;
+    const keep = e ? {slipRef:e.slipRef||"", slipFrom:e.slipFrom||"", slipTo:e.slipTo||""} : {};
+    const data={kind:"expense",desc:$("#f-desc").value.trim(),amount,cat,payer,date,mode:m,shares,...keep,...slipFields,addedBy:e?(e.addedBy||""):Me.get(t.id),createdAt:e?e.createdAt:Date.now()};
+    if(payers) data.payers=payers;
+    try{
+      await Store.saveExp(t.id, e?e.id:uid(), data); closeSheet(); toast(e?"แก้ไขแล้ว":"บันทึกแล้ว");
+      if(slip && !payers) learnNames(t, [[payer,slip.from]]).catch(()=>{});
+    }catch(x){ dbErr(x); }
+  };
+  if(e) $("#f-del").onclick = async () => {
+    if(!armed){ armed=true; $("#f-del").textContent="แตะอีกครั้งเพื่อลบ"; return; }
+    try{ await Store.delExp(t.id,e.id); closeSheet(); toast("ลบแล้ว"); }catch(x){ dbErr(x); }
+  };
+}
+
+/* ---------- Actions ---------- */
+async function settle(i){
+  const t=trip(); const x=compute(t,st.exps).xfers[i]; if(!x) return;
+  try{ await Store.saveExp(t.id, uid(), {kind:"transfer",payer:x.from,to:x.to,amount:x.amt,date:today(),addedBy:Me.get(t.id),createdAt:Date.now()}); closeSheet(); toast("บันทึกการโอนแล้ว"); }
+  catch(e){ dbErr(e); }
+}
+function summaryText(){
+  const t=trip(), c=compute(t,st.exps);
+  const lines=[`🧾 ${t.name}`, `รวม ${fmt(c.total)} (${t.members.length} คน)`, ""];
+  if(c.xfers.length){ lines.push("ต้องโอน:"); c.xfers.forEach(x=>lines.push(`• ${mname(t,x.from)} → ${mname(t,x.to)} ${fmt(x.amt)}`)); }
+  else lines.push("เคลียร์ครบแล้ว ไม่มีใครค้าง");
+  lines.push("", "ใครจ่ายไปเท่าไหร่:"); t.members.forEach(m=>lines.push(`• ${m.name} ${fmt(c.paid[m.id])}`));
+  if(Store.db) lines.push("", "ดูรายละเอียด: "+tripUrl(t));
+  return lines.join("\n");
+}
+function tripUrl(t){ return location.origin+location.pathname+"#/t/"+t.id; }
+async function shareTrip(){
+  const t=trip(); if(!t) return; const url=tripUrl(t);
+  const text=`มาจดค่าใช้จ่ายทริป “${t.name}” ด้วยกัน เปิดลิงก์นี้ แล้วเลือกว่าคุณคือใคร`;
+  if(navigator.share){ try{ await navigator.share({title:t.name,text,url}); return; }catch(e){ if(e && e.name==="AbortError") return; } }
+  try{ await navigator.clipboard.writeText(text+"\n"+url); toast("คัดลอกลิงก์แล้ว วางในไลน์กลุ่มได้เลย"); }
+  catch{ openSheet(`<h3>ลิงก์ทริป</h3><p class="hint">กดค้างที่ลิงก์แล้วเลือกคัดลอก ใครมีลิงก์นี้จะเปิดดูและเพิ่มรายการได้</p><textarea class="inp" id="linktxt" rows="3" readonly>${esc(url)}</textarea><div class="foot"><div class="r"><button class="btn pri" data-act="close">ปิด</button></div></div>`);
+    const ta=$("#linktxt"); ta.focus(); ta.select(); }
+}
+async function copySummary(){
+  const txt=summaryText();
+  try{ await navigator.clipboard.writeText(txt); toast("คัดลอกแล้ว วางในไลน์กลุ่มได้เลย"); }
+  catch{ openSheet(`<h3>สรุปสำหรับส่งไลน์</h3><p class="hint">กดค้างที่ข้อความแล้วเลือกคัดลอก</p><textarea class="inp" id="sumtxt" rows="10" readonly>${esc(txt)}</textarea><div class="foot"><div class="r"><button class="btn pri" data-act="close">ปิด</button></div></div>`);
+    const ta=$("#sumtxt"); ta.focus(); ta.select(); }
+}
+
+document.addEventListener("click", ev => {
+  const b=ev.target.closest("[data-act]"); if(!b) return;
+  const a=b.dataset.act;
+  if(a==="new-trip") canWrite()?tripSheet(false):toast(RO_MSG);
+  else if(a==="edit-trip") tripSheet(true);
+  else if(a==="add-exp") canWrite()?expSheet(null):toast(RO_MSG);
+  else if(a==="edit-exp") canWrite()?expSheet(b.dataset.id):toast(RO_MSG);
+  else if(a==="settle") settle(+b.dataset.i);
+  else if(a==="qr") qrSheet(+b.dataset.i);
+  else if(a==="copy") copySummary();
+  else if(a==="share") shareTrip();
+  else if(a==="close") closeSheet();
+});
+$("#scrim").addEventListener("click", e=>{ if(e.target.id==="scrim") closeSheet(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("#scrim").hidden) closeSheet(); });
+$("#trip-select").addEventListener("change", e=>selectTrip(e.target.value));
+document.addEventListener("change", e=>{ if(e.target && e.target.id==="me-sel"){ const t=trip(); if(t){ Me.set(t.id,e.target.value); toast(e.target.value?"จำไว้แล้ว รายการใหม่จะตั้งคุณเป็นคนจ่ายให้":"ล้างแล้ว"); } } });
+function linkTripId(){ const m=(location.hash||"").match(/^#\/t\/([A-Za-z0-9]{16,40})$/); return m?m[1]:null; }
+window.addEventListener("hashchange", ()=>{ const id=linkTripId(); if(id && Store.db && id!==st.cur){ Joined.add(id); st.cur=id; Store.syncTrips(); } });
+
+/* ---------- Boot ---------- */
+(async () => {
+  await Store.init();
+  const linked = linkTripId();
+  if(linked && Store.db){ Joined.add(linked); st.cur = linked; }
+  let first=true;
+  Store.subTrips(list => {
+    st.trips=list; st.loaded=true;
+    if(!list.find(t=>t.id===st.cur)){
+      if(first && linked && Store.db) toast("ไม่พบทริปจากลิงก์นี้ ลิงก์อาจผิด หรือทริปถูกลบไปแล้ว");
+      const nx=[...list].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0];
+      selectTrip(nx?nx.id:null);
+    } else if(!unsubExp) { selectTrip(st.cur); if(linked && !Me.get(st.cur)) toast("เลือกว่าคุณคือใคร ที่ช่อง “ฉันคือ”"); }
+    else render();
+    first=false;
+  });
+  if(!hasFirebase) render();
+})();
+})();
+</script>
+</body>
+</html>
