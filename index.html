@@ -606,6 +606,72 @@ async function decodeSlipQr(file){
   }
   return null;
 }
+/* ---- Free OCR in the browser (Tesseract.js, Thai + English) ---- */
+const TH_MONTHS=[["มค",1],["กพ",2],["มีค",3],["เมย",4],["พค",5],["มิย",6],["กค",7],["สค",8],["กย",9],["ตค",10],["พย",11],["ธค",12]];
+function parseSlipText(raw){
+  const text=String(raw||"").replace(/ํา/g,"ำ").replace(/[ \t]+/g," ");
+  const lines=text.split(/\n/).map(l=>l.trim()).filter(Boolean);
+  const out={amount:null,date:null,sender_name:"",receiver_name:"",memo:""};
+  // amount: n,nnn.dd ; prefer the one near "จำนวน", else the largest non-zero
+  const amtRe=/(\d{1,3}(?:[,\s]\d{3})*|\d+)[.,](\d{2})(?!\d)/g;
+  const cands=[];
+  lines.forEach((l,i)=>{ if(/x{2,}|X{2,}|เลขที่|รายการ:|\d{2}:\d{2}/i.test(l)) return;
+    let m; amtRe.lastIndex=0; while((m=amtRe.exec(l))){ const v=parseFloat(m[1].replace(/[,\s]/g,"")+"."+m[2]); if(v>0) cands.push({v,i,near:false}); } });
+  const ai=lines.findIndex(l=>/จำนวน|จํานวน|Amount/i.test(l));
+  if(ai>=0) cands.forEach(c=>{ if(c.i>=ai && c.i<=ai+2) c.near=true; });
+  const pick=cands.find(c=>c.near) || cands.sort((a,b)=>b.v-a.v)[0];
+  if(pick) out.amount=pick.v;
+  // date: dd <thai month> yy(yy)
+  for(const l of lines){
+    const m=l.match(/(\d{1,2})\s*([ก-๙.]{2,8})\s*(\d{2,4})/);
+    if(!m) continue;
+    const key=m[2].replace(/[^ก-ฮเีิ]/g,"");
+    const mo=(TH_MONTHS.find(([k])=>k===key)||[])[1]; if(!mo) continue;
+    let y=parseInt(m[3],10); if(y<100) y+=2500; if(y>2400) y-=543;
+    const d=parseInt(m[1],10); if(d<1||d>31||y<2000||y>2100) continue;
+    out.date=`${y}-${String(mo).padStart(2,"0")}-${String(d).padStart(2,"0")}`; break;
+  }
+  // names: Thai lines between the date line and "จำนวน", skipping account/keyword lines
+  const di=lines.findIndex(l=>/\d{1,2}\s*[ก-๙.]{2,8}\s*\d{2,4}/.test(l));
+  const stop= ai>=0?ai:lines.length;
+  const skip=/สำเร็จ|สําเร็จ|จำนวน|ค่าธรรมเนียม|เลขที่|รายการ|สแกน|ตรวจสอบ|ธนาคาร|บัญชี|พร้อมเพย์|โอนเงิน|ผู้รับ|ผู้โอน|จาก|ไปยัง/;
+  const names=[];
+  for(let i=Math.max(0,di+1);i<stop;i++){
+    let l=lines[i].replace(/^[^ก-ฮ]+/,"").replace(/[^ก-๙A-Za-z.\s]+$/,"").trim();
+    if(!l || skip.test(l) || /x{2,}|\d{3,}/i.test(lines[i])) continue;
+    const thai=(l.match(/[ก-๙]/g)||[]).length; if(thai<3) continue;
+    names.push(l.slice(0,60));
+  }
+  out.sender_name=names[0]||""; out.receiver_name=names[1]||"";
+  // memo: first Thai line after the reference-number line that isn't a label
+  const ri=lines.findIndex(l=>/เลขที่รายการ|รหัสอ้างอิง/.test(l));
+  if(ri>=0) for(let i=ri+1;i<lines.length;i++){ const l=lines[i].trim(); if(/[ก-๙]{3}/.test(l) && !skip.test(l)){ out.memo=l.replace(/^บันทึกช่วยจำ[:\s]*/,"").slice(0,120); break; } }
+  return out;
+}
+let _ocrWorker=null;
+function loadScript(src){ return new Promise((res,rej)=>{ const sc=document.createElement("script"); sc.src=src; sc.onload=res; sc.onerror=()=>rej(new Error("load "+src)); document.head.appendChild(sc); }); }
+async function getOcr(onStatus){
+  if(_ocrWorker) return _ocrWorker;
+  if(!window.Tesseract) await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js");
+  _ocrWorker = window.Tesseract.createWorker("tha+eng", 1, { logger: m=>{ if(onStatus && m.status) onStatus(m.status, m.progress); } });
+  try{ return await _ocrWorker; }catch(e){ _ocrWorker=null; throw e; }
+}
+function normName(n){ return String(n||"").replace(/^(นางสาว|นาง|นาย|น\.ส\.|ด\.ช\.|ด\.ญ\.|Mr\.?|Mrs\.?|Ms\.?|Miss)\s*/i,"").replace(/[\s.]/g,"").toLowerCase(); }
+function matchMember(t,name){
+  const n=normName(name); if(n.length<2) return null;
+  for(const m of t.members) if((m.aliases||[]).some(a=>normName(a)===n)) return m.id;
+  const hits=t.members.filter(m=>{ const k=normName(m.name); return k.length>=2 && (n.includes(k) || k.includes(n)); });
+  return hits.length===1 ? hits[0].id : null;
+}
+async function slipOcr(file,t,onStatus){
+  const w=await getOcr(onStatus);
+  const { data } = await w.recognize(file);
+  const r=parseSlipText(data.text||"");
+  if(!r.amount && !r.date && !r.sender_name) return null;
+  return { is_slip:true, amount:r.amount, date:r.date, sender_name:r.sender_name, receiver_name:r.receiver_name, memo:r.memo,
+           cat: /ห้อง|ที่พัก|รีสอร์ท|โรงแรม|resort|hotel|มัดจำ/i.test(r.memo+r.receiver_name) ? "stay" : /น้ำมัน|ปตท|PTT|บางจาก|เชลล์|shell/i.test(r.memo+r.receiver_name) ? "fuel" : null,
+           payer_id: matchMember(t,r.sender_name), receiver_id: matchMember(t,r.receiver_name), _ocr:true };
+}
 async function slipAi(file,t,signal){
   const fd=new FormData();
   fd.append("image",file);
@@ -642,7 +708,7 @@ function expSheet(id){
   let slip = null;   // what was read from the attached slip
   openSheet(`<h3>${e?"แก้ไขรายจ่าย":"เพิ่มรายจ่าย"}</h3>${e&&e.addedBy?`<div class="by" id="addedby"></div>`:""}
     ${e ? slipInfo(e) : `<div class="slipbox" id="slipbox">
-      <div class="sliprow"><span class="filebtn btn">แนบสลิปโอนเงิน<input type="file" id="f-slip" accept="${esc(Slip.accept)}" aria-label="แนบสลิปโอนเงิน"></span><span class="hint">${Slip.ai?"อ่านยอด ชื่อผู้โอน และวันที่ให้อัตโนมัติ":"อ่านเลขรายการจาก QR บนสลิป กันบันทึกซ้ำ"} · หรือลากรูปมาวาง / Ctrl+V</span></div>
+      <div class="sliprow"><span class="filebtn btn">แนบสลิปโอนเงิน<input type="file" id="f-slip" accept="${esc(Slip.accept)}" aria-label="แนบสลิปโอนเงิน"></span><span class="hint">อ่านยอด วันที่ ชื่อผู้โอน และเลขรายการให้อัตโนมัติ · หรือลากรูปมาวาง / Ctrl+V</span></div>
       <textarea class="inp pastebox" id="f-paste" rows="1" placeholder="หรือคัดลอกรูปสลิป แล้วแตะค้างตรงนี้ เลือก “วาง”" aria-label="วางรูปสลิป"></textarea>
       <div id="slip-out"></div></div>`}
     <div class="field"><label for="f-amount">จำนวนเงิน (บาท)</label><input class="inp big" id="f-amount" inputmode="decimal" placeholder="0" value="${e?(e.amount/100):""}"></div>
@@ -701,10 +767,12 @@ function expSheet(id){
     if(ctl) ctl.abort(); ctl = new AbortController(); const my=ctl;
     if(thumbUrl) URL.revokeObjectURL(thumbUrl);
     thumbUrl = URL.createObjectURL(file);
-    out.innerHTML = `<div class="sliprow"><img class="slipthumb" src="${thumbUrl}" alt="สลิปที่แนบ"><span class="hint">กำลังอ่านสลิป…</span></div>`;
+    out.innerHTML = `<div class="sliprow"><img class="slipthumb" src="${thumbUrl}" alt="สลิปที่แนบ"><span class="hint" id="slip-status">กำลังอ่านสลิป…</span></div>`;
+    const status=(st,p)=>{ const el=document.getElementById("slip-status"); if(!el) return;
+      el.textContent = /loading|load|initializ/i.test(st) ? `กำลังโหลดตัวอ่านภาษาไทย${p?` ${Math.round(p*100)}%`:""}… (ครั้งแรกเท่านั้น)` : /recogniz/i.test(st) ? `กำลังอ่านตัวหนังสือบนสลิป${p?` ${Math.round(p*100)}%`:""}…` : "กำลังอ่านสลิป…"; };
     const [qr, ai] = await Promise.all([
       decodeSlipQr(file).catch(()=>null),
-      Slip.ai ? slipAi(file,t,my.signal).catch(err=>({_err:err})) : Promise.resolve(null)
+      Slip.ai ? slipAi(file,t,my.signal).catch(err=>({_err:err})) : slipOcr(file,t,status).catch(err=>{ console.error("ocr",err); return null; })
     ]);
     if(my.signal.aborted || !out.isConnected) return;
     const aiOk = ai && !ai._err && ai.is_slip;
@@ -747,7 +815,9 @@ function expSheet(id){
         <span class="k">เลขรายการ</span><span class="v num" style="font-size:12.5px">${slip.ref?esc(slip.ref):"ไม่พบ QR"}</span>
         <label class="k" for="f-recv">ผู้รับคือ</label>
         <select class="inp" id="f-recv"><option value="">ร้าน/ที่พัก/คนนอกทริป (เป็นรายจ่าย)</option>${t.members.map(m=>`<option value="${esc(m.id)}" ${slip.recv===m.id?"selected":""}>${esc(m.name)} (โอนคืนในกลุ่ม)</option>`).join("")}</select>
-        ${!aiOk ? `<div class="warn">อ่าน QR บนสลิปได้แล้ว ใส่ยอดเงินและเลือกคนโอนด้านล่าง</div>`
+        ${!aiOk ? `<div class="warn">อ่านได้แค่เลขรายการ ใส่ยอดเงินและเลือกคนโอนด้านล่าง</div>`
+          : r._ocr && !slip.payer ? `<div class="warn">อ่านจากรูปอัตโนมัติ ตรวจยอดก่อนบันทึก · ยังไม่รู้ว่า “${esc(slip.from||"ผู้โอน")}” คือใคร เลือกที่ “ใครออกเงิน” ครั้งหน้าจะจำได้เอง</div>`
+          : r._ocr ? `<div class="warn">อ่านจากรูปอัตโนมัติ ตรวจยอดก่อนบันทึก</div>`
           : slip.payer ? "" : `<div class="warn">ยังไม่รู้ว่า “${esc(slip.from||"ผู้โอน")}” คือใคร เลือกที่ช่อง “ใครออกเงิน” ด้านล่าง ครั้งหน้าจะจำได้เอง</div>`}
         ${dup ? `<div class="warn bad">สลิปนี้เคยบันทึกแล้ว (${esc(dup.desc||"รายการโอน")} · ${fmt(dup.amount)})</div>` : ""}
       </div></div>`;
